@@ -21,7 +21,12 @@ public record ScannedPackageDto(
     string RecipientEmail,
     string Source,
     string UpdatedAt
-);
+)
+{
+    // Not serialized into the DB — only used to merge several mails about the same shipment.
+    [System.Text.Json.Serialization.JsonIgnore] public DateTimeOffset MessageDate { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool StatusRecognized { get; init; }
+}
 
 public class ImapPackageScanner
 {
@@ -74,7 +79,7 @@ public class ImapPackageScanner
                 foreach (var parsed in folderResults)
                 {
                     var key = parsed.TrackingNumber.ToUpperInvariant();
-                    if (!results.ContainsKey(key) || parsed.Status == "delivered" || parsed.Status == "out_for_delivery")
+                    if (!results.TryGetValue(key, out var current) || IsBetterUpdate(parsed, current))
                         results[key] = parsed;
                 }
             }
@@ -85,6 +90,19 @@ public class ImapPackageScanner
         }
 
         return results.Values.OrderByDescending(p => p.ExpectedDelivery ?? "").ToList();
+    }
+
+    // Several mails can mention the same tracking number (shipping confirmation, "kommt heute",
+    // "zugestellt", review requests, ...). The newest mail with a recognisable status wins, so an
+    // older "zugestellt" can never be overridden by stale info and — more importantly — a plain
+    // status update can no longer win just because its body happened to contain a delivery keyword.
+    private static bool IsBetterUpdate(ScannedPackageDto candidate, ScannedPackageDto current)
+    {
+        if (candidate.StatusRecognized != current.StatusRecognized) return candidate.StatusRecognized;
+        // A real "delivered" mail is final; don't let a later unrelated mail (e.g. a rating request) undo it.
+        if (current.Status == "delivered" && candidate.Status != "delivered") return false;
+        if (candidate.Status == "delivered" && current.Status != "delivered") return true;
+        return candidate.MessageDate > current.MessageDate;
     }
 
     private async Task<List<ScannedPackageDto>> ScanFolderAsync(
@@ -176,8 +194,12 @@ public class ImapPackageScanner
             title = $"Sendung {carrier.ToUpper()} ({trackingNumber[^Math.Min(6, trackingNumber.Length)..]})";
         }
 
-        // 5. Detect status
-        string status = DetectStatus(combined);
+        // 5. Detect status — only from the subject and the visible body text. The raw HTML
+        //    (hidden preheaders, footers, "Was tun, wenn ... nicht zugestellt wurde?" links) caused
+        //    plain status-update mails to be marked as delivered.
+        var visibleBody = !string.IsNullOrWhiteSpace(textBody) ? textBody : HtmlToText(htmlBody);
+        var detectedStatus = DetectStatus(subject, visibleBody);
+        string status = detectedStatus ?? "in_transit";
 
         // 6. Detect expected delivery date
         string? expectedDate = ExtractDeliveryDate(combined, message.Date.DateTime);
@@ -197,7 +219,11 @@ public class ImapPackageScanner
             RecipientEmail: recipientEmail,
             Source: "email_scan",
             UpdatedAt: DateTime.UtcNow.ToString("o")
-        );
+        )
+        {
+            MessageDate = message.Date,
+            StatusRecognized = detectedStatus is not null,
+        };
     }
 
     private static string DetectCarrier(string from, string subject, string content)
@@ -308,21 +334,78 @@ public class ImapPackageScanner
         return null;
     }
 
-    private static string DetectStatus(string content)
+    private const RegexOptions Rx = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+
+    // Problems: failed attempt, returned, delayed. Checked first because these mails usually also
+    // contain the word "zugestellt" ("konnte nicht zugestellt werden").
+    private static readonly Regex ExceptionPattern = new(
+        @"(konnte|könnte)\s+(\w+\s+){0,3}nicht\s+(zugestellt|geliefert|übergeben)" +
+        @"|zustellversuch\s+(war\s+)?(leider\s+)?(nicht\s+erfolgreich|erfolglos)|nicht\s+(angetroffen|antreffen)" +
+        @"|sendung\s+(ist|wird)\s+verzögert|rücksendung\s+an|zurück\s+an\s+(den\s+)?absender" +
+        @"|adresse\s+(ist\s+)?(unvollständig|fehlerhaft)|could\s+not\s+be\s+delivered|delivery\s+attempt\s+failed", Rx);
+
+    // Only explicit past-tense confirmations count as delivered. "wird heute zugestellt",
+    // "voraussichtlich zugestellt", "sobald ... zugestellt wurde" and "Ablage beim Nachbarn möglich"
+    // are status updates, not a completed delivery.
+    private static readonly Regex DeliveredPattern = new(
+        @"\b(wurde|wurden|ist|sind|haben\s+wir|hat)\s+(heute\s+|gerade\s+|soeben\s+|bereits\s+|erfolgreich\s+|am\s+\d{1,2}\.\d{1,2}\.(\d{2,4})?\s+(um\s+\d{1,2}[:.]\d{2}\s*(uhr)?\s+)?)*" +
+        @"(zugestellt|ausgeliefert|übergeben|abgegeben|abgestellt|eingelegt|geliefert)\b" +
+        @"|\berfolgreich\s+(zugestellt|übergeben|ausgeliefert)" +
+        @"|\b(wurde|ist)\s+(\w+\s+){0,4}(an|bei)\s+(ihren|ihrem|deinen|deinem|einen|einem|den|dem)\s+nachbarn?\s+(\w+\s+){0,3}(zugestellt|abgegeben|übergeben)" +
+        @"|\b(has\s+been|was)\s+delivered\b", Rx);
+
+    // Subjects are short and reliable ("Zugestellt: ...", "Paket zugestellt"). Not used on the body,
+    // where FAQ footers like "Sendung zugestellt, aber nicht erhalten?" are common.
+    private static readonly Regex DeliveredSubjectPattern = new(
+        @"^\s*(\w+:\s*)?(zugestellt|geliefert|delivered)\b|\b(sendung|paket|lieferung|bestellung)\s+zugestellt\b", Rx);
+
+    private static readonly Regex OutForDeliveryPattern = new(
+        @"in\s+zustellung|zustellfahrzeug|wird\s+(voraussichtlich\s+)?heute\s+(zugestellt|geliefert)|heute\s+geliefert|kommt\s+heute" +
+        @"|heute\s+bei\s+(ihnen|dir)|zustellung\s+heute|zustellzeitfenster|out\s+for\s+delivery|arriving\s+today" +
+        @"|abholbereit|zur\s+abholung\s+bereit|liegt\s+(\w+\s+){0,4}zur\s+abholung|abholung\s+in\s+(der|einer)\s+(filiale|packstation)", Rx);
+
+    private static readonly Regex InTransitPattern = new(
+        @"im\s+paketzentrum|weitertransport|logistikzentrum|sortiert|auf\s+dem\s+weg|unterwegs|versandt|verschickt|versendet" +
+        @"|bearbeitet|wird\s+(\w+\s+){0,3}(zugestellt|geliefert)|voraussichtlich" +
+        @"|wurde\s+an\s+(den\s+)?(versanddienstleister|paketdienst|zusteller)\s+übergeben|shipped|in\s+transit", Rx);
+
+    private static readonly Regex AnnouncedPattern = new(
+        @"angekündigt|elektronisch\s+übermittelt|auftragsdaten\s+erhalten|sendungsdaten\s+erhalten|bestellbestätigung|vorbereitet", Rx);
+
+    // Returns null when no status could be recognised, so callers can tell a real update apart
+    // from an unrelated mail that merely mentions the tracking number.
+    internal static string? DetectStatus(string subject, string body)
     {
-        if (Regex.IsMatch(content, @"zugestellt|erfolgreich übergeben|an nachbar|abholbereit", RegexOptions.IgnoreCase))
-            return "delivered";
+        // The subject is the most reliable signal — evaluate it on its own first.
+        var fromSubject = DetectStatusIn(subject, isSubject: true);
+        if (fromSubject is not null) return fromSubject;
+        return DetectStatusIn(body, isSubject: false);
+    }
 
-        if (Regex.IsMatch(content, @"in zustellung|zustellfahrzeug|wird heute zugestellt|heute geliefert", RegexOptions.IgnoreCase))
-            return "out_for_delivery";
+    private static string? DetectStatusIn(string text, bool isSubject)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = Regex.Replace(text, @"\s+", " ");
 
-        if (Regex.IsMatch(content, @"im paketzentrum|weitertransport|logistikzentrum|sortiert|auf dem weg", RegexOptions.IgnoreCase))
-            return "in_transit";
+        if (ExceptionPattern.IsMatch(text)) return "exception";
+        if (OutForDeliveryPattern.IsMatch(text) && !DeliveredPattern.IsMatch(text)) return "out_for_delivery";
+        if (DeliveredPattern.IsMatch(text) || (isSubject && DeliveredSubjectPattern.IsMatch(text))) return "delivered";
+        if (OutForDeliveryPattern.IsMatch(text)) return "out_for_delivery";
+        if (InTransitPattern.IsMatch(text)) return "in_transit";
+        if (AnnouncedPattern.IsMatch(text)) return "announced";
+        return null;
+    }
 
-        if (Regex.IsMatch(content, @"angekündigt|elektronisch übermittelt|auftragsdaten erhalten", RegexOptions.IgnoreCase))
-            return "announced";
-
-        return "in_transit";
+    internal static string HtmlToText(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return "";
+        var text = Regex.Replace(html, @"<(style|script|head|title)[^>]*>.*?</\1>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        // Hidden preheaders (display:none) often contain marketing/FAQ text, not the actual status.
+        text = Regex.Replace(text, @"<(div|span|td|p)[^>]*display\s*:\s*none[^>]*>.*?</\1>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        text = Regex.Replace(text, @"<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"<[^>]+>", " ");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        return Regex.Replace(text, @"[ \t\r\f\v\u00A0]+", " ").Trim();
     }
 
     private static string? ExtractDeliveryDate(string content, DateTime fallbackDate)

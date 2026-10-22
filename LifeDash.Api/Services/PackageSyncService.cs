@@ -36,10 +36,29 @@ public class PackageSyncService
             if (byTracking.TryGetValue(key, out var existingPkg))
             {
                 var history = DeserializeHistory(existingPkg.HistoryJson);
-                if (history.Any(h => h.text == newEntry.text && h.time == newEntry.time)) continue;
+                var sameIndex = history.FindIndex(h => h.text == newEntry.text && h.time == newEntry.time);
+                if (sameIndex >= 0)
+                {
+                    // Same mail seen before. If it was the latest entry and the old parser read it as
+                    // "delivered" but it isn't, correct it. Manual changes always add a newer history
+                    // entry, so they are never overwritten here.
+                    var same = history[sameIndex];
+                    var isLatest = sameIndex == history.Count - 1;
+                    if (isLatest && same.status == "delivered" && s.Status != "delivered" && existingPkg.Status == "delivered")
+                    {
+                        history[sameIndex] = same with { status = s.Status };
+                        existingPkg.Status = s.Status;
+                        existingPkg.HistoryJson = JsonSerializer.Serialize(history);
+                        existingPkg.UpdatedAt = DateTime.UtcNow;
+                        updated++;
+                    }
+                    continue;
+                }
 
                 history.Add(newEntry);
-                existingPkg.Status = s.Status;
+                // An unrelated mail that only mentions the tracking number (no recognisable status)
+                // must not move the package back or forward — just record it in the history.
+                if (s.StatusRecognized) existingPkg.Status = s.Status;
                 existingPkg.Sender ??= s.Sender;
                 existingPkg.ExpectedDelivery = ParseDateOnly(s.ExpectedDelivery) ?? existingPkg.ExpectedDelivery;
                 existingPkg.LatestEvent = s.LatestEvent;
