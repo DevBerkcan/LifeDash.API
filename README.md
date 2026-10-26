@@ -33,6 +33,21 @@ Edit `LifeDash.Api/appsettings.json`, or override with environment variables
 | `Swagger__Enabled` | Set to `false` in production |
 | `ReminderTrigger__ApiKey` | Secret required by the external reminder trigger. Use a random value of at least 32 characters. |
 
+## Mein Setup
+
+| Teil | Wo |
+|---|---|
+| API | https://gentlelife.runasp.net (MonsterASP, site102177) |
+| Frontend | https://gentlelife.vercel.app (Vercel-Projekt `gentlelife`) |
+| Datenbank | MonsterASP MSSQL `db76034` (nur vom Hosting aus erreichbar) |
+
+Lokal: `LifeDash.Api/appsettings.Development.json` zeigt auf LocalDB, das Schema
+legt die API beim ersten Start selbst an. Die echten Werte stehen in
+`LifeDash.Api/appsettings.json` (gitignored, nie committen).
+
+Deploy: `dotnet publish LifeDash.Api -c Release -o publish`, dann den Inhalt von
+`publish/` per FTPS nach `/wwwroot` hochladen (ohne `appsettings.Development.json`).
+
 ## API surface
 
 | Method | Route | Notes |
