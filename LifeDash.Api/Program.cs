@@ -101,6 +101,13 @@ app.Use(async (ctx, next) =>
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LifeDashContext>();
+
+    // A fresh, empty database gets the whole schema from the EF model; the patches below then
+    // only matter for databases that were created from the older SQL scripts.
+    var createdFresh = false;
+    try { createdFresh = await db.Database.EnsureCreatedAsync(); }
+    catch (Exception ex) { app.Logger.LogError(ex, "Could not create the database schema at startup."); }
+
     // Each schema patch runs on its own, so one failing statement (e.g. a constraint that clashes
     // with existing data) can't silently skip every patch after it.
     string[] schemaPatches =
@@ -151,7 +158,7 @@ using (var scope = app.Services.CreateScope())
         """,
     ];
 
-    foreach (var sql in schemaPatches)
+    foreach (var sql in createdFresh ? Array.Empty<string>() : schemaPatches)
     {
         try { await db.Database.ExecuteSqlRawAsync(sql); }
         catch (Exception ex) { app.Logger.LogWarning(ex, "Schema patch failed at startup: {Sql}", sql.Trim()); }

@@ -264,6 +264,9 @@ public static class ModuleEndpoints
             if (!await db.Trips.AnyAsync(t => t.Id == tripId && t.UserId == u.UserId(), ct)) return Results.NotFound();
             var b = await db.Bookings.FirstOrDefaultAsync(x => x.Id == id && x.TripId == tripId, ct);
             if (b is null) return Results.NotFound();
+            await db.PackingItems
+                .Where(p => p.BookingId == id)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.BookingId, (int?)null), ct);
             db.Remove(b);
             await db.SaveChangesAsync(ct);
             return Results.NoContent();

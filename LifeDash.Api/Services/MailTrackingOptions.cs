@@ -2,7 +2,7 @@ namespace LifeDash.Api.Services;
 
 public class MailTrackingOptions
 {
-    public string Email { get; set; } = "medin_93@live.com";
+    public string Email { get; set; } = "";
 
     // Legacy Basic Auth (username + app password). Microsoft retired this for Outlook.com/
     // Live/Hotmail consumer mailboxes in September 2024 — IMAP now only accepts XOAUTH2, so this

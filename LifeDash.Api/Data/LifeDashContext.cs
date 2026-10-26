@@ -89,7 +89,9 @@ public class LifeDashContext : DbContext
             .HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<PackingItem>()
             .HasOne(p => p.Booking).WithMany()
-            .HasForeignKey(p => p.BookingId).OnDelete(DeleteBehavior.SetNull);
+            // SQL Server rejects a second cascade path from Trips, so the booking delete endpoint
+            // clears BookingId itself.
+            .HasForeignKey(p => p.BookingId).OnDelete(DeleteBehavior.ClientSetNull);
     }
 
     public override int SaveChanges()

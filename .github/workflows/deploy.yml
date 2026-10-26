@@ -1,8 +1,8 @@
 name: Build, publish and deploy to MonsterASP.NET
 
+# Manual only: the live site is deployed over FTP (see README "Mein Setup").
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   build_and_deploy:
