@@ -57,7 +57,7 @@ public static class AuthEndpoints
             if (allowed.Count > 0 && !allowed.Contains(email))
             {
                 logger.LogWarning("Google login rejected for {Email}: not in Auth:AllowedEmails.", email);
-                return Results.Json(new { error = "Dieses Google-Konto hat keinen Zugriff auf LifeDash." }, statusCode: 403);
+                return Results.Json(new { error = "Dieses Google-Konto hat keinen Zugriff auf GentleLife." }, statusCode: 403);
             }
 
             if (sharedLogins.TryGetValue(email, out var ownerEmail))

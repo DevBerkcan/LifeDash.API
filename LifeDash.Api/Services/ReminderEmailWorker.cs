@@ -212,7 +212,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#4f6df5", "📅", "Termin", a.Title, "Morgen fällig",
                     "Dieser Termin steht morgen an.", RowsFor(dayBefore),
                     AppUrl("/termine"), "Termin ansehen",
-                    "LifeDash erinnert dich automatisch einen Tag vor jedem Termin.");
+                    "GentleLife erinnert dich automatisch einen Tag vor jedem Termin.");
                 await SendReminderAsync(a.Notes, MarkerFor(AppointmentSentTag, tomorrow),
                     $"Erinnerung morgen: {a.Title}", body, ct, n => a.Notes = n);
             }
@@ -226,7 +226,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#4f6df5", "📅", "Termin", a.Title, "In einer Stunde",
                     "Dieser Termin beginnt in weniger als einer Stunde.", RowsFor(next),
                     AppUrl("/termine"), "Termin ansehen",
-                    "LifeDash erinnert dich automatisch ungefähr eine Stunde vor dem Termin.");
+                    "GentleLife erinnert dich automatisch ungefähr eine Stunde vor dem Termin.");
                 await SendReminderAsync(a.Notes, MarkerFor(AppointmentOneHourSentTag, next),
                     $"Termin in einer Stunde: {a.Title}", body, ct, n => a.Notes = n);
             }
@@ -259,7 +259,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#0ea5a3", "✈️", "Reise · Check-in", b.Title, "In 24 Stunden",
                     "Dieser Flug startet in weniger als 24 Stunden.", rows,
                     AppUrl($"/travel/{b.TripId}"), "Reise ansehen",
-                    "LifeDash erinnert dich automatisch ungefähr 24 Stunden vor Abflug.");
+                    "GentleLife erinnert dich automatisch ungefähr 24 Stunden vor Abflug.");
                 await SendReminderAsync(b.Notes, MarkerFor(FlightSentTag, startsAt),
                     $"Flug in 24 Stunden: {b.Title}", body, ct, n => b.Notes = n);
             }
@@ -285,7 +285,7 @@ public class ReminderEmailWorker : BackgroundService
                     ("Person", person),
                 },
                 AppUrl("/termine"), "In den Terminen ansehen",
-                "LifeDash erinnert dich automatisch am Tag selbst an wichtigen Anlässen.");
+                "GentleLife erinnert dich automatisch am Tag selbst an wichtigen Anlässen.");
 
             await SendReminderAsync(i.Notes, MarkerFor(BirthdaySentTag, occurrence.Value),
                 $"Heute: {i.Title}", body, ct, n => i.Notes = n);
@@ -310,7 +310,7 @@ public class ReminderEmailWorker : BackgroundService
                     ("Bereich", Label(TaskModuleLabels, t.Module)),
                 },
                 AppUrl("/tasks"), "Aufgabe ansehen",
-                "LifeDash erinnert dich automatisch am Fälligkeitstag jeder Aufgabe.");
+                "GentleLife erinnert dich automatisch am Fälligkeitstag jeder Aufgabe.");
 
             await SendReminderAsync(t.Notes, MarkerFor(TaskSentTag, t.DueOn.Value),
                 $"Heute fällig: {t.Title}", body, ct, n => t.Notes = n);
@@ -339,7 +339,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#ef4444", "💳", "Finanzen · Zahlung", p.Title, "Morgen fällig",
                     "Diese Zahlung ist morgen fällig.", rows,
                     AppUrl("/finance"), "In Finanzen öffnen",
-                    "LifeDash erinnert dich automatisch einen Tag vor jeder fälligen Zahlung.");
+                    "GentleLife erinnert dich automatisch einen Tag vor jeder fälligen Zahlung.");
                 await SendReminderAsync(p.Notes, MarkerFor(PaymentSentTag, p.DueOn),
                     $"Zahlung morgen fällig: {p.Title}", body, ct, n => p.Notes = n);
             }
@@ -350,7 +350,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#ef4444", "💳", "Finanzen · Zahlung", p.Title, "Heute fällig",
                     "Diese Zahlung ist heute fällig.", rows,
                     AppUrl("/finance"), "In Finanzen öffnen",
-                    "LifeDash erinnert dich automatisch am Fälligkeitstag jeder Zahlung.");
+                    "GentleLife erinnert dich automatisch am Fälligkeitstag jeder Zahlung.");
                 await SendReminderAsync(p.Notes, MarkerFor(PaymentDueTodaySentTag, p.DueOn),
                     $"Zahlung heute fällig: {p.Title}", body, ct, n => p.Notes = n);
             }
@@ -404,7 +404,7 @@ public class ReminderEmailWorker : BackgroundService
                 "#ef4444", "💳", "Finanzen · Fixkosten", c.Name, "Heute fällig",
                 "Diese wiederkehrenden Kosten sind heute fällig.", rows,
                 AppUrl("/finance"), "In Finanzen öffnen",
-                "LifeDash erinnert dich automatisch am Fälligkeitstag jeder Fixkosten-Zahlung.");
+                "GentleLife erinnert dich automatisch am Fälligkeitstag jeder Fixkosten-Zahlung.");
             await SendReminderAsync(c.Notes, MarkerFor(FixedCostDueTodaySentTag, nextDue),
                 $"Fixkosten heute fällig: {c.Name}", body, ct, n => c.Notes = n);
         }
@@ -463,7 +463,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#10b981", "💰", "Finanzen · Einnahme", i.Source, "Morgen erwartet",
                     "Diese Einnahme wird morgen erwartet.", rows,
                     AppUrl("/finance"), "In Finanzen öffnen",
-                    "LifeDash erinnert dich automatisch einen Tag vor jeder erwarteten Einnahme (monatlicher Turnus).");
+                    "GentleLife erinnert dich automatisch einen Tag vor jeder erwarteten Einnahme (monatlicher Turnus).");
                 await SendReminderAsync(i.Notes, MarkerFor(IncomeSentTag, next.Value),
                     $"Einnahme morgen erwartet: {i.Source}", body, ct, n => i.Notes = n);
             }
@@ -474,7 +474,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#10b981", "💰", "Finanzen · Einnahme", i.Source, "Heute erwartet",
                     "Diese Einnahme wird heute erwartet.", rows,
                     AppUrl("/finance"), "In Finanzen öffnen",
-                    "LifeDash erinnert dich automatisch am Tag jeder erwarteten Einnahme (monatlicher Turnus).");
+                    "GentleLife erinnert dich automatisch am Tag jeder erwarteten Einnahme (monatlicher Turnus).");
                 await SendReminderAsync(i.Notes, MarkerFor(IncomeDueTodaySentTag, next.Value),
                     $"Einnahme heute erwartet: {i.Source}", body, ct, n => i.Notes = n);
             }
@@ -505,7 +505,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#d97706", "📄", "Vertrag · Kündigungsfrist", s.Name, "Frist endet morgen",
                     "Die Kündigungsfrist für diesen Vertrag endet morgen.", rows,
                     AppUrl("/contracts"), "Vertrag ansehen",
-                    "LifeDash erinnert dich automatisch einen Tag vor jeder Kündigungsfrist.");
+                    "GentleLife erinnert dich automatisch einen Tag vor jeder Kündigungsfrist.");
                 await SendReminderAsync(s.Notes, MarkerFor(ContractCancelSentTag, s.CancelByOn.Value),
                     $"Kündigungsfrist morgen: {s.Name}", body, ct, n => s.Notes = n);
             }
@@ -516,7 +516,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#d97706", "📄", "Vertrag · Kündigungsfrist", s.Name, "Frist endet heute",
                     "Die Kündigungsfrist für diesen Vertrag endet heute.", rows,
                     AppUrl("/contracts"), "Vertrag ansehen",
-                    "LifeDash erinnert dich automatisch am Tag jeder Kündigungsfrist.");
+                    "GentleLife erinnert dich automatisch am Tag jeder Kündigungsfrist.");
                 await SendReminderAsync(s.Notes, MarkerFor(ContractCancelDueTodaySentTag, s.CancelByOn.Value),
                     $"Kündigungsfrist heute: {s.Name}", body, ct, n => s.Notes = n);
             }
@@ -548,7 +548,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#7c3aed", "🏛️", "Behörden · Frist", c.Title, "Frist morgen",
                     "Die Frist für diesen Behördenvorgang endet morgen.", rows,
                     AppUrl($"/authorities/{c.Id}"), "Vorgang ansehen",
-                    "LifeDash erinnert dich automatisch einen Tag vor jeder Behördenfrist.");
+                    "GentleLife erinnert dich automatisch einen Tag vor jeder Behördenfrist.");
                 await SendReminderAsync(c.Notes, MarkerFor(AuthorityCaseSentTag, c.DeadlineOn.Value),
                     $"Frist morgen: {c.Title}", body, ct, n => c.Notes = n);
             }
@@ -559,7 +559,7 @@ public class ReminderEmailWorker : BackgroundService
                     "#7c3aed", "🏛️", "Behörden · Frist", c.Title, "Frist heute",
                     "Die Frist für diesen Behördenvorgang endet heute.", rows,
                     AppUrl($"/authorities/{c.Id}"), "Vorgang ansehen",
-                    "LifeDash erinnert dich automatisch am Tag jeder Behördenfrist.");
+                    "GentleLife erinnert dich automatisch am Tag jeder Behördenfrist.");
                 await SendReminderAsync(c.Notes, MarkerFor(AuthorityCaseDueTodaySentTag, c.DeadlineOn.Value),
                     $"Frist heute: {c.Title}", body, ct, n => c.Notes = n);
             }

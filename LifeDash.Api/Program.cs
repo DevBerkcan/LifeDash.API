@@ -192,7 +192,7 @@ app.UseCors("spa");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/", () => Results.Ok(new { name = "Life Dashboard API", version = "1.0.0" }));
+app.MapGet("/", () => Results.Ok(new { name = "GentleLife API", version = "1.0.0" }));
 app.MapGet("/api/health", async (LifeDashContext db) =>
 {
     var ok = await db.Database.CanConnectAsync();

@@ -54,7 +54,7 @@ public static class EmailTemplate
         <table role=""presentation"" cellpadding=""0"" cellspacing=""0"">
           <tr>
             <td align=""center"" bgcolor=""{accentHex}"" style=""border-radius:10px;"">
-              <a href=""{WebUtility.HtmlEncode(actionUrl)}"" target=""_blank"" style=""display:inline-block;padding:12px 26px;font-family:{FontStack};font-size:14.5px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;"">{Enc(actionLabel ?? "In LifeDash öffnen")} &rarr;</a>
+              <a href=""{WebUtility.HtmlEncode(actionUrl)}"" target=""_blank"" style=""display:inline-block;padding:12px 26px;font-family:{FontStack};font-size:14.5px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;"">{Enc(actionLabel ?? "In GentleLife öffnen")} &rarr;</a>
             </td>
           </tr>
         </table>
@@ -116,7 +116,7 @@ public static class EmailTemplate
           <tr>
             <td style=""padding:16px 32px;background:#f7f9fc;border-top:1px solid #edf1f6;"" align=""center"">
               <p style=""margin:0 0 4px;color:#8a94a3;font-family:{FontStack};font-size:12px;line-height:1.5;text-align:center;"">{Enc(footerNote)}</p>
-              <span style=""display:block;color:#b3bccb;font-family:{FontStack};font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-top:6px;"">LifeDash</span>
+              <span style=""display:block;color:#b3bccb;font-family:{FontStack};font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-top:6px;"">GentleLife</span>
             </td>
           </tr>
         </table>
