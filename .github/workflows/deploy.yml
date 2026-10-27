@@ -33,6 +33,20 @@ jobs:
           dotnet publish LifeDash.Api/LifeDash.Api.csproj -c Release -o publish
           rm -f publish/appsettings*.json
 
+      # The FTP server sends its certificate without the Let's Encrypt intermediate. Windows fetches
+      # that automatically, OpenSSL doesn't: download it from the certificate's AIA URL and check the
+      # completed chain against the system trust store, so curl keeps verifying the server.
+      - name: Complete the FTP server's certificate chain
+        run: |
+          echo | openssl s_client -starttls ftp -connect "$FTP_HOST:21" -servername "$FTP_HOST" 2>/dev/null \
+            | openssl x509 > leaf.pem
+          issuer_url=$(openssl x509 -in leaf.pem -noout -ext authorityInfoAccess | sed -n 's/.*CA Issuers - URI:\(.*\)/\1/p' | head -1)
+          echo "Intermediate: $issuer_url"
+          curl -fsS "$issuer_url" -o issuer.der
+          openssl x509 -inform DER -in issuer.der -out issuer.pem 2>/dev/null || cp issuer.der issuer.pem
+          openssl verify -untrusted issuer.pem leaf.pem
+          cat /etc/ssl/certs/ca-certificates.crt issuer.pem > ftp-ca.pem
+
       - name: Upload over FTPS
         env:
           FTP_USER: ${{ secrets.FTP_USER }}
@@ -40,6 +54,7 @@ jobs:
         run: |
           if [ -z "$FTP_USER" ] || [ -z "$FTP_PASSWORD" ]; then echo "::error::Secrets FTP_USER / FTP_PASSWORD are missing."; exit 1; fi
           base="ftp://$FTP_HOST/wwwroot"
+          export CURL_CA_BUNDLE="$PWD/ftp-ca.pem"
           up() { curl -sS --ssl-reqd --ftp-create-dirs --retry 3 --user "$FTP_USER:$FTP_PASSWORD" -T "$1" "$base/$2"; }
 
           # app_offline.htm stops the app so its DLLs aren't locked while they're replaced.
