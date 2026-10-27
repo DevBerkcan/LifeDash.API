@@ -40,31 +40,36 @@ public class ImapAppointmentScanner
 
     public async Task<List<ScannedAppointmentDto>> ScanMailboxAsync(IEnumerable<string> knownNames, CancellationToken ct = default)
     {
-        var email = _options.Email?.Trim();
-        var password = _options.AppPassword?.Replace(" ", "").Trim();
-        var accessToken = await _msAuth.TryGetAccessTokenAsync(ct);
-
-        if (string.IsNullOrWhiteSpace(email) || (accessToken is null && string.IsNullOrWhiteSpace(password)))
-        {
-            _logger.LogWarning("Neither a Microsoft OAuth connection nor an IMAP app password is configured for mailbox scanning.");
-            return new List<ScannedAppointmentDto>();
-        }
-
         var names = knownNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
         var results = new List<ScannedAppointmentDto>();
-        var folderNames = _options.FoldersToScan is { Length: > 0 } configured ? configured : ["INBOX"];
         var maxPerFolder = Math.Max(1, _options.MaxMessagesPerFolder);
         var lookbackSince = DateTime.UtcNow.AddDays(-Math.Max(1, _options.DefaultLookbackDays));
 
-        foreach (var folderName in folderNames)
+        foreach (var mailbox in _options.GetMailboxes())
         {
-            try
+            var email = mailbox.Email.Trim();
+            var password = mailbox.AppPassword?.Replace(" ", "").Trim();
+            var accessToken = mailbox.UseMicrosoftOAuth ? await _msAuth.TryGetAccessTokenAsync(ct) : null;
+
+            if (accessToken is null && string.IsNullOrWhiteSpace(password))
             {
-                results.AddRange(await ScanFolderAsync(email, accessToken, password, folderName, lookbackSince, maxPerFolder, names, ct));
+                _logger.LogWarning("Mailbox {Email}: neither a Microsoft OAuth connection nor an IMAP app password is configured.", email);
+                continue;
             }
-            catch (Exception ex)
+
+            var folderNames = mailbox.FoldersToScan is { Length: > 0 } own ? own
+                : _options.FoldersToScan is { Length: > 0 } configured ? configured : ["INBOX"];
+
+            foreach (var folderName in folderNames)
             {
-                _logger.LogWarning(ex, "Scanning folder '{Folder}' for appointments failed; keeping results from other folders.", folderName);
+                try
+                {
+                    results.AddRange(await ScanFolderAsync(mailbox, email, accessToken, password, folderName, lookbackSince, maxPerFolder, names, ct));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Scanning folder '{Folder}' of {Email} for appointments failed; keeping results from other folders.", folderName, email);
+                }
             }
         }
 
@@ -72,14 +77,14 @@ public class ImapAppointmentScanner
     }
 
     private async Task<List<ScannedAppointmentDto>> ScanFolderAsync(
-        string email, string? accessToken, string? password, string folderName,
+        MailboxOptions mailbox, string email, string? accessToken, string? password, string folderName,
         DateTime lookbackSince, int maxPerFolder, List<string> knownNames, CancellationToken ct)
     {
         var found = new List<ScannedAppointmentDto>();
 
         using var client = new ImapClient();
         client.Timeout = 60000;
-        await client.ConnectAsync(_options.ImapHost, _options.ImapPort, _options.UseSsl, ct);
+        await client.ConnectAsync(mailbox.ImapHost, mailbox.ImapPort, mailbox.UseSsl, ct);
 
         if (accessToken is not null)
             await client.AuthenticateAsync(new SaslMechanismOAuth2(email, accessToken), ct);
@@ -310,16 +315,14 @@ public class ImapAppointmentScanner
             return (inner.Name, inner.Address);
 
         var outer = message.From.Mailboxes.FirstOrDefault();
-        var ownAddress = _options.Email?.Trim();
-        var isFromSelf = outer != null && !string.IsNullOrEmpty(ownAddress)
-                         && string.Equals(outer.Address, ownAddress, StringComparison.OrdinalIgnoreCase);
+        var isFromSelf = outer != null && _options.IsOwnAddress(outer.Address);
 
         if (isFromSelf || ForwardPrefixRegex.IsMatch(rawSubject))
         {
             foreach (Match m in InlineForwardHeaderRegex.Matches(bodyText))
             {
                 var addr = m.Groups["addr"].Value.Trim();
-                if (!string.IsNullOrEmpty(ownAddress) && string.Equals(addr, ownAddress, StringComparison.OrdinalIgnoreCase)) continue;
+                if (_options.IsOwnAddress(addr)) continue;
                 return (m.Groups["name"].Value.Trim(' ', '"', '\''), addr);
             }
         }

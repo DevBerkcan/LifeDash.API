@@ -1,0 +1,65 @@
+name: Scheduled jobs
+
+# Calls the API's job endpoints on a schedule. Needs the repository secret JOB_KEY
+# (= ReminderTrigger:ApiKey in the server's appsettings.json).
+# The 5-minute reminder call also keeps the free MonsterASP site from going idle.
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # reminders
+    - cron: "15 */6 * * *"  # mailbox scan
+    - cron: "0 5 * * 0"     # weekly backup mail, Sunday 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which job to run
+        type: choice
+        options: [reminders, mail-scan, backup]
+        default: reminders
+
+concurrency:
+  group: jobs-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: false
+
+env:
+  API_URL: https://gentlelife.runasp.net
+
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pick job
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "*/5 * * * *")  job=reminders ;;
+            "15 */6 * * *") job=mail-scan ;;
+            "0 5 * * 0")    job=backup ;;
+            *)              job="${{ inputs.job }}" ;;
+          esac
+          case "$job" in
+            reminders) header=X-Reminder-Trigger ;;
+            mail-scan) header=X-MailScan-Trigger ;;
+            backup)    header=X-Backup-Trigger ;;
+          esac
+          echo "job=$job" >> "$GITHUB_OUTPUT"
+          echo "header=$header" >> "$GITHUB_OUTPUT"
+
+      - name: Call /api/jobs/${{ steps.pick.outputs.job }}
+        env:
+          JOB_KEY: ${{ secrets.JOB_KEY }}
+        run: |
+          if [ -z "$JOB_KEY" ]; then echo "::error::Repository secret JOB_KEY is missing."; exit 1; fi
+          # The first call after an idle period can take a while (cold start), so retry once.
+          for attempt in 1 2; do
+            # IIS rejects a POST without Content-Length (411), hence the empty --data.
+            status=$(curl -sS -o response.json -w '%{http_code}' --max-time 240 -X POST --data "" \
+              -H "${{ steps.pick.outputs.header }}: $JOB_KEY" \
+              "$API_URL/api/jobs/${{ steps.pick.outputs.job }}") || status=000
+            echo "Attempt $attempt: HTTP $status"; cat response.json 2>/dev/null; echo
+            [ "$status" = "200" ] && exit 0
+            # 503 = the job isn't configured on the server yet (e.g. no SMTP): not a failure.
+            if [ "$status" = "503" ]; then echo "::warning::Job not configured on the server yet."; exit 0; fi
+            sleep 20
+          done
+          exit 1

@@ -47,45 +47,50 @@ public class ImapPackageScanner
     // throttling on repeated scans.
     public async Task<List<ScannedPackageDto>> ScanMailboxAsync(bool fullHistory = false, CancellationToken ct = default)
     {
-        var email = _options.Email?.Trim();
-        var password = _options.AppPassword?.Replace(" ", "").Trim();
-
-        // Microsoft retired Basic Auth (app passwords) for Outlook.com/Live/Hotmail IMAP in
-        // September 2024 — prefer the OAuth (XOAUTH2) token when a Microsoft sign-in is connected,
-        // and only fall back to the legacy password login for providers that still support it.
-        var accessToken = await _msAuth.TryGetAccessTokenAsync(ct);
-
-        if (string.IsNullOrWhiteSpace(email) || (accessToken is null && string.IsNullOrWhiteSpace(password)))
-        {
-            _logger.LogWarning("Neither a Microsoft OAuth connection nor an IMAP app password is configured for package tracking.");
-            return new List<ScannedPackageDto>();
-        }
-
         var results = new Dictionary<string, ScannedPackageDto>(StringComparer.OrdinalIgnoreCase);
-        var folderNames = _options.FoldersToScan is { Length: > 0 } configured ? configured : ["INBOX"];
         var maxPerFolder = Math.Max(1, _options.MaxMessagesPerFolder);
         var lookbackSince = DateTime.UtcNow.AddDays(-Math.Max(1, _options.DefaultLookbackDays));
 
-        // Exchange Online enforces some per-session cap on total IMAP commands/duration — scanning
-        // several folders back-to-back on one connection can get disconnected mid-way (observed even
-        // with a single SEARCH + a few hundred FETCHes per folder). Using one fresh connection per
-        // folder keeps each session short, and a failure in one folder never discards results already
-        // found in another.
-        foreach (var folderName in folderNames)
+        foreach (var mailbox in _options.GetMailboxes())
         {
-            try
+            var email = mailbox.Email.Trim();
+            var password = mailbox.AppPassword?.Replace(" ", "").Trim();
+
+            // Microsoft retired Basic Auth (app passwords) for Outlook.com/Live/Hotmail IMAP in
+            // September 2024 — those mailboxes log in with the OAuth (XOAUTH2) token from the
+            // Microsoft sign-in, everything else (e.g. Gmail) with its app password.
+            var accessToken = mailbox.UseMicrosoftOAuth ? await _msAuth.TryGetAccessTokenAsync(ct) : null;
+
+            if (accessToken is null && string.IsNullOrWhiteSpace(password))
             {
-                var folderResults = await ScanFolderAsync(email, accessToken, password, folderName, fullHistory, lookbackSince, maxPerFolder, ct);
-                foreach (var parsed in folderResults)
-                {
-                    var key = parsed.TrackingNumber.ToUpperInvariant();
-                    if (!results.TryGetValue(key, out var current) || IsBetterUpdate(parsed, current))
-                        results[key] = parsed;
-                }
+                _logger.LogWarning("Mailbox {Email}: neither a Microsoft OAuth connection nor an IMAP app password is configured.", email);
+                continue;
             }
-            catch (Exception ex)
+
+            var folderNames = mailbox.FoldersToScan is { Length: > 0 } own ? own
+                : _options.FoldersToScan is { Length: > 0 } configured ? configured : ["INBOX"];
+
+            // Exchange Online enforces some per-session cap on total IMAP commands/duration — scanning
+            // several folders back-to-back on one connection can get disconnected mid-way (observed even
+            // with a single SEARCH + a few hundred FETCHes per folder). Using one fresh connection per
+            // folder keeps each session short, and a failure in one folder never discards results already
+            // found in another.
+            foreach (var folderName in folderNames)
             {
-                _logger.LogWarning(ex, "Scanning folder '{Folder}' failed; keeping results from other folders.", folderName);
+                try
+                {
+                    var folderResults = await ScanFolderAsync(mailbox, email, accessToken, password, folderName, fullHistory, lookbackSince, maxPerFolder, ct);
+                    foreach (var parsed in folderResults)
+                    {
+                        var key = parsed.TrackingNumber.ToUpperInvariant();
+                        if (!results.TryGetValue(key, out var current) || IsBetterUpdate(parsed, current))
+                            results[key] = parsed;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Scanning folder '{Folder}' of {Email} failed; keeping results from other folders.", folderName, email);
+                }
             }
         }
 
@@ -106,7 +111,7 @@ public class ImapPackageScanner
     }
 
     private async Task<List<ScannedPackageDto>> ScanFolderAsync(
-        string email, string? accessToken, string? password, string folderName,
+        MailboxOptions mailbox, string email, string? accessToken, string? password, string folderName,
         bool fullHistory, DateTime lookbackSince, int maxPerFolder, CancellationToken ct)
     {
         var found = new List<ScannedPackageDto>();
@@ -114,7 +119,7 @@ public class ImapPackageScanner
         using var client = new ImapClient();
         client.Timeout = 60000;
 
-        await client.ConnectAsync(_options.ImapHost, _options.ImapPort, _options.UseSsl, ct);
+        await client.ConnectAsync(mailbox.ImapHost, mailbox.ImapPort, mailbox.UseSsl, ct);
 
         if (accessToken is not null)
             await client.AuthenticateAsync(new SaslMechanismOAuth2(email, accessToken), ct);

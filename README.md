@@ -41,12 +41,26 @@ Edit `LifeDash.Api/appsettings.json`, or override with environment variables
 | Frontend | https://gentlelife.vercel.app (Vercel-Projekt `gentlelife`) |
 | Datenbank | MonsterASP MSSQL `db76034` (nur vom Hosting aus erreichbar) |
 
-Lokal: `LifeDash.Api/appsettings.Development.json` zeigt auf LocalDB, das Schema
-legt die API beim ersten Start selbst an. Die echten Werte stehen in
-`LifeDash.Api/appsettings.json` (gitignored, nie committen).
+Die echten Werte stehen in `LifeDash.Api/appsettings.json` (gitignored, nie committen).
+Lokal zeigt `LifeDash.Api/appsettings.Development.json` auf LocalDB.
 
-Deploy: `dotnet publish LifeDash.Api -c Release -o publish`, dann den Inhalt von
-`publish/` per FTPS nach `/wwwroot` hochladen (ohne `appsettings.Development.json`).
+**Datenbank:** EF-Core-Migrationen laufen beim Start automatisch (`Data/Migrations`).
+Neues Feld im Model → `dotnet ef migrations add <Name> -o Data/Migrations` im Ordner
+`LifeDash.Api`, committen, deployen.
+
+**Deploy:** Push auf `master` startet `.github/workflows/deploy.yml` (Upload per FTPS,
+`appsettings*.json` und `App_Data` auf dem Server bleiben unangetastet).
+Repository-Secrets: `FTP_USER`, `FTP_PASSWORD`.
+
+**Zeitgesteuerte Jobs:** `.github/workflows/jobs.yml` ruft alle 5 Minuten die Erinnerungen,
+alle 6 Stunden den Postfach-Scan und sonntags das Backup auf. Repository-Secret:
+`JOB_KEY` (= `ReminderTrigger:ApiKey` aus `appsettings.json`).
+
+**Backup:** In der App unten links „Backup herunterladen“ (ZIP mit `data.json` und allen
+Dokumenten). Zusätzlich kommt sonntags eine Backup-Mail, sobald SMTP konfiguriert ist.
+
+**Postfächer:** `MailTracking:Mailboxes` – Gmail mit App-Passwort, Outlook.com über den
+Microsoft-Login (`MailTracking:MicrosoftOAuth:ClientId`, in der App unter „Dienste verbinden“).
 
 ## API surface
 

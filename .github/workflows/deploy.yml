@@ -1,56 +1,64 @@
-name: Build, publish and deploy to MonsterASP.NET
+name: Deploy API to MonsterASP
 
-# Manual only: the live site is deployed over FTP (see README "Mein Setup").
+# Builds the API and uploads it over FTPS. appsettings*.json are never uploaded: the server
+# keeps its own appsettings.json with the real secrets, and App_Data (uploads) is left alone.
+# Needs the repository secrets FTP_USER and FTP_PASSWORD.
 on:
+  push:
+    branches: [master]
+    paths: ["LifeDash.Api/**", ".github/workflows/deploy.yml"]
   workflow_dispatch:
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  FTP_HOST: site102177.siteasp.net
+  API_URL: https://gentlelife.runasp.net
+
 jobs:
-  build_and_deploy:
-    runs-on: windows-latest
-    environment: Website
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0
-
-      # AUTH_ALLOWED_EMAILS: comma-separated, e.g. "me@gmail.com"
-      # AUTH_SHARED_LOGINS: comma-separated "login=owner" pairs, e.g. "wife@gmail.com=me@gmail.com"
-      - name: Write login config
-        shell: pwsh
-        env:
-          AUTH_ALLOWED_EMAILS: ${{ secrets.AUTH_ALLOWED_EMAILS }}
-          AUTH_SHARED_LOGINS: ${{ secrets.AUTH_SHARED_LOGINS }}
-        run: |
-          $allowed = @("$env:AUTH_ALLOWED_EMAILS" -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-          $shared = [ordered]@{}
-          foreach ($pair in "$env:AUTH_SHARED_LOGINS" -split ',') {
-            $parts = $pair -split '=', 2
-            if ($parts.Count -eq 2 -and $parts[0].Trim() -and $parts[1].Trim()) { $shared[$parts[0].Trim()] = $parts[1].Trim() }
-          }
-          if ($allowed.Count -eq 0 -and $shared.Count -eq 0) {
-            Write-Error "AUTH_ALLOWED_EMAILS / AUTH_SHARED_LOGINS are empty - refusing to deploy an API open to every Google account."
-            exit 1
-          }
-          @{ Auth = @{ AllowedEmails = $allowed; SharedLogins = $shared } } |
-            ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 LifeDash.Api/appsettings.Auth.json
-          Write-Host "Login config: $($allowed.Count) allowed email(s), $($shared.Count) shared login(s)."
-
-      - name: Restore
-        run: dotnet restore LifeDash.Api/LifeDash.Api.csproj
-
-      - name: Build
-        run: dotnet build LifeDash.Api/LifeDash.Api.csproj --configuration Release --no-restore
+          dotnet-version: 8.0.x
 
       - name: Publish
-        run: dotnet publish LifeDash.Api/LifeDash.Api.csproj --configuration Release --output ./publish --no-build
+        run: |
+          dotnet publish LifeDash.Api/LifeDash.Api.csproj -c Release -o publish
+          rm -f publish/appsettings*.json
 
-      - name: Deploy to MonsterASP.NET via WebDeploy
-        uses: rasmusbuchholdt/simply-web-deploy@2.2.0
-        with:
-          website-name: ${{ secrets.WEBSITE_NAME }}
-          server-computer-name: ${{ secrets.SERVER_COMPUTER_NAME }}
-          server-username: ${{ secrets.SERVER_USERNAME }}
-          server-password: ${{ secrets.SERVER_PASSWORD }}
+      - name: Upload over FTPS
+        env:
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          if [ -z "$FTP_USER" ] || [ -z "$FTP_PASSWORD" ]; then echo "::error::Secrets FTP_USER / FTP_PASSWORD are missing."; exit 1; fi
+          base="ftp://$FTP_HOST/wwwroot"
+          up() { curl -sS --ssl-reqd --ftp-create-dirs --retry 3 --user "$FTP_USER:$FTP_PASSWORD" -T "$1" "$base/$2"; }
+
+          # app_offline.htm stops the app so its DLLs aren't locked while they're replaced.
+          echo '<html><body>GentleLife wird aktualisiert ...</body></html>' > app_offline.htm
+          up app_offline.htm app_offline.htm
+          sleep 5
+
+          cd publish
+          find . -type f ! -name web.config | sed 's|^\./||' | while read -r f; do up "$f" "$f"; done
+          up web.config web.config
+          cd ..
+
+          curl -sS --ssl-reqd --user "$FTP_USER:$FTP_PASSWORD" -Q "DELE /wwwroot/app_offline.htm" "ftp://$FTP_HOST/" -o /dev/null
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 60 "$API_URL/api/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "::error::API did not report healthy after the deploy."
+          exit 1

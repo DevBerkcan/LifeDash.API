@@ -38,6 +38,7 @@ builder.Services.AddScoped<ImapPackageScanner>();
 builder.Services.AddScoped<PackageSyncService>();
 builder.Services.AddScoped<ImapAppointmentScanner>();
 builder.Services.AddScoped<AppointmentSyncService>();
+builder.Services.AddScoped<BackupService>();
 builder.Services.AddSingleton<ReminderEmailWorker>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ReminderEmailWorker>());
 
@@ -65,7 +66,8 @@ var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string
 builder.Services.AddCors(o => o.AddPolicy("spa", p => p
     .WithOrigins(origins)
     .AllowAnyHeader()
-    .AllowAnyMethod()));
+    .AllowAnyMethod()
+    .WithExposedHeaders("Content-Disposition")));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -97,85 +99,31 @@ app.Use(async (ctx, next) =>
     });
 });
 
-// ---------- fix the seeded demo password hash once ----------
+// ---------- database schema (EF Core migrations) ----------
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LifeDashContext>();
-
-    // A fresh, empty database gets the whole schema from the EF model; the patches below then
-    // only matter for databases that were created from the older SQL scripts.
-    var createdFresh = false;
-    try { createdFresh = await db.Database.EnsureCreatedAsync(); }
-    catch (Exception ex) { app.Logger.LogError(ex, "Could not create the database schema at startup."); }
-
-    // Each schema patch runs on its own, so one failing statement (e.g. a constraint that clashes
-    // with existing data) can't silently skip every patch after it.
-    string[] schemaPatches =
-    [
-        """
-        IF COL_LENGTH('dbo.Trips', 'StartPlace') IS NULL
-            ALTER TABLE dbo.Trips ADD StartPlace NVARCHAR(200) NULL;
-        """,
-        """
-        IF COL_LENGTH('dbo.Bookings', 'Direction') IS NULL
-            ALTER TABLE dbo.Bookings ADD Direction NVARCHAR(20) NULL;
-        """,
-        """
-        IF COL_LENGTH('dbo.PackingItems', 'BookingId') IS NULL
-            ALTER TABLE dbo.PackingItems ADD BookingId INT NULL;
-        """,
-        """
-        IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_PackingItems_Bookings')
-            ALTER TABLE dbo.PackingItems ADD CONSTRAINT FK_PackingItems_Bookings
-                FOREIGN KEY (BookingId) REFERENCES dbo.Bookings(Id) ON DELETE SET NULL;
-        """,
-        """
-        IF COL_LENGTH('dbo.Appointments', 'Recurrence') IS NULL
-            ALTER TABLE dbo.Appointments ADD Recurrence NVARCHAR(20) NULL;
-        """,
-        """
-        IF COL_LENGTH('dbo.Appointments', 'RecurrenceUntil') IS NULL
-            ALTER TABLE dbo.Appointments ADD RecurrenceUntil DATE NULL;
-        """,
-        """
-        IF OBJECT_ID('dbo.SavingsEntries', 'U') IS NULL
-            CREATE TABLE dbo.SavingsEntries (
-                Id        INT IDENTITY(1,1) PRIMARY KEY,
-                UserId    INT NOT NULL,
-                Kind      NVARCHAR(20)  NOT NULL CONSTRAINT DF_SavingsEntries_Kind DEFAULT 'deposit',
-                Amount    DECIMAL(12,2) NOT NULL,
-                Currency  NVARCHAR(3)   NOT NULL CONSTRAINT DF_SavingsEntries_Currency DEFAULT 'EUR',
-                EntryDate DATE NOT NULL,
-                Note      NVARCHAR(300) NULL,
-                CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_SavingsEntries_CreatedAt DEFAULT SYSUTCDATETIME(),
-                CONSTRAINT FK_SavingsEntries_Users FOREIGN KEY (UserId) REFERENCES dbo.Users(Id) ON DELETE CASCADE
-            );
-        """,
-        """
-        IF OBJECT_ID('dbo.SavingsEntries', 'U') IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SavingsEntries_UserId' AND object_id = OBJECT_ID('dbo.SavingsEntries'))
-            CREATE INDEX IX_SavingsEntries_UserId ON dbo.SavingsEntries(UserId);
-        """,
-    ];
-
-    foreach (var sql in createdFresh ? Array.Empty<string>() : schemaPatches)
-    {
-        try { await db.Database.ExecuteSqlRawAsync(sql); }
-        catch (Exception ex) { app.Logger.LogWarning(ex, "Schema patch failed at startup: {Sql}", sql.Trim()); }
-    }
-
     try
     {
-        var seeded = db.Users.FirstOrDefault(u => u.PasswordHash == "SEED");
-        if (seeded is not null)
-        {
-            seeded.PasswordHash = PasswordHasher.Hash("demo1234");
-            db.SaveChanges();
-        }
+        // Databases created with EnsureCreated before migrations existed already hold the
+        // InitialCreate schema: record it as applied so Migrate only runs the newer ones.
+        var initial = db.Database.GetMigrations().First();
+        if (await db.Database.CanConnectAsync())
+            await db.Database.ExecuteSqlRawAsync("""
+            IF OBJECT_ID('dbo.__EFMigrationsHistory', 'U') IS NULL AND OBJECT_ID('dbo.Users', 'U') IS NOT NULL
+            BEGIN
+                CREATE TABLE dbo.__EFMigrationsHistory (
+                    MigrationId    NVARCHAR(150) NOT NULL CONSTRAINT PK___EFMigrationsHistory PRIMARY KEY,
+                    ProductVersion NVARCHAR(32)  NOT NULL
+                );
+                INSERT INTO dbo.__EFMigrationsHistory (MigrationId, ProductVersion) VALUES ({0}, '8.0.8');
+            END
+            """, initial);
+        await db.Database.MigrateAsync();
     }
     catch (Exception ex)
     {
-        app.Logger.LogWarning(ex, "Could not reach the database at startup. Run the SQL scripts first.");
+        app.Logger.LogError(ex, "Could not migrate the database at startup.");
     }
 }
 
@@ -255,6 +203,37 @@ app.MapPost("/api/jobs/mail-scan", async (HttpRequest request, IConfiguration co
         return Results.Problem(title: "Mail scan failed. Check the application logs.", detail: ex.Message, statusCode: StatusCodes.Status500InternalServerError);
     }
 }).ExcludeFromDescription();
+
+// Weekly backup mail for the owner account (called by the scheduled GitHub workflow).
+app.MapPost("/api/jobs/backup", async (HttpRequest request, IConfiguration configuration,
+    IOptions<MailTrackingOptions> mailOptions, BackupService backups, CancellationToken ct) =>
+{
+    var expectedKey = configuration["ReminderTrigger:ApiKey"];
+    var receivedKey = request.Headers["X-Backup-Trigger"].ToString();
+    if (string.IsNullOrWhiteSpace(expectedKey))
+        return Results.Problem("ReminderTrigger:ApiKey is not configured.", statusCode: StatusCodes.Status503ServiceUnavailable);
+    if (!string.Equals(receivedKey, expectedKey, StringComparison.Ordinal))
+        return Results.Unauthorized();
+
+    var ownerUserId = mailOptions.Value.OwnerUserId;
+    if (ownerUserId <= 0)
+        return Results.Problem("MailTracking:OwnerUserId is not configured.", statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    return await backups.MailAsync(ownerUserId, ct) switch
+    {
+        BackupMailResult.Sent => Results.Ok(new { status = "sent" }),
+        BackupMailResult.NotConfigured => Results.Problem("ReminderEmail SMTP settings are not configured.", statusCode: StatusCodes.Status503ServiceUnavailable),
+        _ => Results.Problem("Backup mail failed. Check the application logs.", statusCode: StatusCodes.Status500InternalServerError)
+    };
+}).ExcludeFromDescription();
+
+app.MapGet("/api/export", async (ClaimsPrincipal u, BackupService backups, CancellationToken ct) =>
+{
+    var raw = u.FindFirstValue(ClaimTypes.NameIdentifier) ?? u.FindFirstValue("sub");
+    if (!int.TryParse(raw, out var userId)) return Results.Unauthorized();
+    var archive = await backups.CreateAsync(userId, ct);
+    return Results.File(archive.Content, "application/zip", archive.FileName);
+}).RequireAuthorization().WithTags("backup");
 
 app.MapGet("/api/logs", (HttpContext ctx, IAuditLogWriter audit, int? take) =>
 {

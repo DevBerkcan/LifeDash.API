@@ -30,6 +30,38 @@ public class MailTrackingOptions
     public int OwnerUserId { get; set; } = 0;
 
     public MicrosoftOAuthOptions MicrosoftOAuth { get; set; } = new();
+
+    // Several mailboxes (e.g. Gmail via app password + Outlook.com via the Microsoft sign-in).
+    // Empty = the single mailbox configured by Email/AppPassword/ImapHost above.
+    public MailboxOptions[] Mailboxes { get; set; } = [];
+
+    public IReadOnlyList<MailboxOptions> GetMailboxes() => Mailboxes.Length > 0
+        ? Mailboxes.Where(m => !string.IsNullOrWhiteSpace(m.Email)).ToList()
+        : string.IsNullOrWhiteSpace(Email)
+            ? []
+            : [new MailboxOptions
+            {
+                Email = Email, AppPassword = AppPassword, ImapHost = ImapHost, ImapPort = ImapPort,
+                UseSsl = UseSsl, UseMicrosoftOAuth = true, FoldersToScan = FoldersToScan,
+            }];
+
+    public bool IsOwnAddress(string? address) => !string.IsNullOrWhiteSpace(address)
+        && GetMailboxes().Any(m => string.Equals(m.Email.Trim(), address.Trim(), StringComparison.OrdinalIgnoreCase));
+}
+
+public class MailboxOptions
+{
+    public string Email { get; set; } = "";
+    public string AppPassword { get; set; } = "";
+    public string ImapHost { get; set; } = "imap.gmail.com";
+    public int ImapPort { get; set; } = 993;
+    public bool UseSsl { get; set; } = true;
+
+    // Log in with the token from the Microsoft sign-in (Outlook.com) instead of AppPassword.
+    public bool UseMicrosoftOAuth { get; set; }
+
+    // Null = MailTracking:FoldersToScan.
+    public string[]? FoldersToScan { get; set; }
 }
 
 public class MicrosoftOAuthOptions
